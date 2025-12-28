@@ -37,68 +37,98 @@ export function useSound() {
     }
   }, []);
 
-  // 生成挥刀音效（使用Web Audio API生成）
+  // 生成挥刀音效（"咻"的声音）
+  // 只使用真实音效文件，如果不存在则静默
   const playSlashSound = useCallback(() => {
     try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-
-      // 创建或获取AudioContext
-      let audioContext = (window as any).__audioContext;
-      if (!audioContext || audioContext.state === 'closed') {
-        audioContext = new AudioContextClass();
-        (window as any).__audioContext = audioContext;
+      // 首先尝试使用真实音效文件（如果存在）
+      const audio = audioCache.current.get("slash");
+      if (audio) {
+        audio.currentTime = 0;
+        audio.volume = 0.6;
+        audio.play().catch(() => {
+          // 如果播放失败，静默处理
+        });
+        return;
       }
 
-      // 如果AudioContext被暂停，尝试恢复
-      if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(() => {});
-      }
-
-      const now = audioContext.currentTime;
-      const duration = 0.08; // 更短的持续时间
-
-      // 创建主音调 - 使用更柔和的sine波
-      const oscillator1 = audioContext.createOscillator();
-      const gainNode1 = audioContext.createGain();
-      
-      oscillator1.connect(gainNode1);
-      gainNode1.connect(audioContext.destination);
-      
-      // 使用更柔和的频率范围
-      oscillator1.frequency.setValueAtTime(600, now);
-      oscillator1.frequency.exponentialRampToValueAtTime(300, now + duration);
-      
-      gainNode1.gain.setValueAtTime(0.15, now);
-      gainNode1.gain.exponentialRampToValueAtTime(0.01, now + duration);
-      
-      oscillator1.type = "sine"; // 使用sine波，更柔和
-      oscillator1.start(now);
-      oscillator1.stop(now + duration);
-
-      // 添加一个高频谐波，增加清脆感
-      const oscillator2 = audioContext.createOscillator();
-      const gainNode2 = audioContext.createGain();
-      
-      oscillator2.connect(gainNode2);
-      gainNode2.connect(audioContext.destination);
-      
-      oscillator2.frequency.setValueAtTime(1200, now);
-      oscillator2.frequency.exponentialRampToValueAtTime(400, now + duration * 0.6);
-      
-      gainNode2.gain.setValueAtTime(0.08, now);
-      gainNode2.gain.exponentialRampToValueAtTime(0.01, now + duration * 0.6);
-      
-      oscillator2.type = "sine";
-      oscillator2.start(now);
-      oscillator2.stop(now + duration * 0.6);
+      // 尝试加载音效文件
+      const soundFile = new Audio("/sounds/slash.mp3");
+      soundFile.volume = 0.6;
+      soundFile.preload = "auto";
+      soundFile.oncanplaythrough = () => {
+        audioCache.current.set("slash", soundFile);
+        soundFile.currentTime = 0;
+        soundFile.play().catch(() => {
+          // 如果播放失败，静默处理
+        });
+      };
+      soundFile.onerror = () => {
+        // 文件不存在，静默处理
+      };
+      soundFile.load();
     } catch (error) {
-      console.debug("Slash sound generation failed:", error);
+      // 如果出错，静默处理
+    }
+  }, []);
+
+  // 生成切碎音效
+  // 优先使用真实音效文件，如果不存在则使用Web Audio API生成
+  const playSliceSound = useCallback(() => {
+    try {
+      // 首先尝试使用真实音效文件（如果存在）
+      const audio = audioCache.current.get("slice");
+      if (audio) {
+        audio.currentTime = 0;
+        audio.volume = 0.7;
+        audio.play().catch(() => {
+          // 如果播放失败，使用生成的音效
+          generateSliceSound();
+        });
+        return;
+      }
+
+      // 尝试加载音效文件（支持多个可能的文件名）
+      const possibleFiles = [
+        "/sounds/slice.mp3",
+        "/sounds/504610__neospica__knife-slice.mp3",
+      ];
+
+      let loaded = false;
+      for (const filePath of possibleFiles) {
+        const soundFile = new Audio(filePath);
+        soundFile.volume = 0.7;
+        soundFile.preload = "auto";
+        soundFile.oncanplaythrough = () => {
+          if (!loaded) {
+            loaded = true;
+            audioCache.current.set("slice", soundFile);
+            soundFile.currentTime = 0;
+            soundFile.play().catch(() => {
+              generateSliceSound();
+            });
+          }
+        };
+        soundFile.onerror = () => {
+          // 继续尝试下一个文件
+        };
+        soundFile.load();
+      }
+
+      // 如果所有文件都加载失败，延迟后使用生成的音效
+      setTimeout(() => {
+        if (!audioCache.current.get("slice")) {
+          generateSliceSound();
+        }
+      }, 100);
+    } catch (error) {
+      // 如果出错，使用生成的音效
+      generateSliceSound();
     }
   }, []);
 
   // 生成切碎音效（使用Web Audio API生成）
-  const playSliceSound = useCallback(() => {
+  const generateSliceSound = useCallback(() => {
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioContextClass) return;
