@@ -8,27 +8,6 @@ interface GameHomeProps {
 
 const games = [
   {
-    id: "jump",
-    name: "Jump Challenge",
-    description: "Jump up to make Mario jump!",
-    emoji: "🦘",
-    color: "from-red-500 to-pink-500",
-  },
-  {
-    id: "wave",
-    name: "Wave Race",
-    description: "Wave your hands to control the character!",
-    emoji: "👋",
-    color: "from-blue-500 to-cyan-500",
-  },
-  {
-    id: "balance",
-    name: "Balance Board",
-    description: "Lean left and right to balance!",
-    emoji: "⚖️",
-    color: "from-yellow-500 to-orange-500",
-  },
-  {
     id: "fruit",
     name: "Fruit Ninja",
     description: "Slice fruits with your hands!",
@@ -57,7 +36,7 @@ export default function GameHome({ onStartGame }: GameHomeProps) {
         </p>
       </motion.div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
+      <div className="flex justify-center">
         {games.map((game, index) => (
           <motion.div
             key={game.id}
@@ -66,14 +45,15 @@ export default function GameHome({ onStartGame }: GameHomeProps) {
             transition={{ delay: index * 0.2, duration: 0.5 }}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
+            className="w-full max-w-md"
           >
             <button
               onClick={() => onStartGame(game.id)}
-              className={`w-full h-64 rounded-2xl bg-gradient-to-br ${game.color} p-6 shadow-2xl hover:shadow-3xl transition-all duration-300 flex flex-col items-center justify-center text-white`}
+              className={`w-full h-80 rounded-2xl bg-gradient-to-br ${game.color} p-8 shadow-2xl hover:shadow-3xl transition-all duration-300 flex flex-col items-center justify-center text-white`}
             >
-              <div className="text-6xl mb-4">{game.emoji}</div>
-              <h2 className="text-2xl font-bold mb-2">{game.name}</h2>
-              <p className="text-sm opacity-90">{game.description}</p>
+              <div className="text-8xl mb-6">{game.emoji}</div>
+              <h2 className="text-4xl font-bold mb-4">{game.name}</h2>
+              <p className="text-lg opacity-90">{game.description}</p>
             </button>
           </motion.div>
         ))}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useSound } from "@/hooks/useSound";
 
 interface FruitNinjaGameProps {
   pose: any;
@@ -14,7 +15,9 @@ interface Fruit {
   y: number;
   type: string;
   emoji: string;
-  speed: number;
+  speed: number; // 水平速度
+  vy: number; // 垂直速度（向上为正）
+  maxY: number; // 最高点（百分比）
   rotation: number;
   rotationSpeed: number;
 }
@@ -63,7 +66,47 @@ export default function FruitNinjaGame({
     left: null,
     right: null,
   });
+  // 平滑处理用的历史位置
+  const smoothedPosRef = useRef<{ left: { x: number; y: number } | null; right: { x: number; y: number } | null }>({
+    left: null,
+    right: null,
+  });
   const gameAreaRef = useRef<HTMLDivElement>(null);
+  const { playSlashSound, playSliceSound } = useSound();
+
+  // 初始化音效系统（在用户首次交互时）
+  useEffect(() => {
+    const initAudio = () => {
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass && !(window as any).__audioContext) {
+          const audioContext = new AudioContextClass();
+          (window as any).__audioContext = audioContext;
+          // 尝试恢复（如果被暂停）
+          if (audioContext.state === 'suspended') {
+            audioContext.resume();
+          }
+        }
+      } catch (error) {
+        console.debug("Audio initialization failed:", error);
+      }
+    };
+
+    // 在用户首次点击或触摸时初始化
+    const handleUserInteraction = () => {
+      initAudio();
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('touchstart', handleUserInteraction);
+    };
+
+    document.addEventListener('click', handleUserInteraction, { once: true });
+    document.addEventListener('touchstart', handleUserInteraction, { once: true });
+
+    return () => {
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('touchstart', handleUserInteraction);
+    };
+  }, []);
 
   // 重置游戏
   const resetGame = () => {
@@ -75,6 +118,10 @@ export default function FruitNinjaGame({
     setSlashTrails([]);
     setFragments([]);
     lastWristPosRef.current = {
+      left: null,
+      right: null,
+    };
+    smoothedPosRef.current = {
       left: null,
       right: null,
     };
@@ -99,13 +146,45 @@ export default function FruitNinjaGame({
     // 立即生成第一个水果
     const generateFruit = () => {
       const fruitType = FRUITS[Math.floor(Math.random() * FRUITS.length)];
+      
+      // 随机最高点（概率上大多数集中在屏幕中央附近）
+      // 使用加权随机，使结果更集中在中央（50%附近）
+      let maxY: number;
+      const rand = Math.random();
+      if (rand < 0.6) {
+        // 60%的概率在屏幕中央附近（40%-60%）
+        maxY = 40 + Math.random() * 20;
+      } else if (rand < 0.85) {
+        // 25%的概率在中央偏上（20%-40%）
+        maxY = 20 + Math.random() * 20;
+      } else if (rand < 0.95) {
+        // 10%的概率在中央偏下（60%-80%）
+        maxY = 60 + Math.random() * 20;
+      } else {
+        // 5%的概率可以到达屏幕顶端（0%-20%）或底部（80%-100%）
+        maxY = Math.random() < 0.5 ? Math.random() * 20 : 80 + Math.random() * 20;
+      }
+      
+      // 计算初始向上速度，使水果能到达最高点
+      // 使用物理公式：v^2 = 2gh，其中h是高度差，g是重力加速度
+      // 从底部(100%)到最高点(maxY%)的高度差
+      const heightDiff = 100 - maxY;
+      // 重力加速度（每帧）- 进一步减小重力使水果能抛得更高
+      const gravity = 0.2;
+      // 初始向上速度，需要足够大以到达最高点
+      // 使用 v = sqrt(2 * g * h) 计算，并添加一些随机变化
+      // 增加一个安全系数，确保能到达最高点
+      const initialVy = Math.sqrt(2 * gravity * heightDiff) * (1.2 + Math.random() * 0.2);
+      
       const newFruit: Fruit = {
         id: Date.now() + Math.random(),
         x: Math.random() * 80 + 10, // 10% 到 90% 的位置
         y: 100, // 从底部开始（100%）
         type: fruitType.type,
         emoji: fruitType.emoji,
-        speed: 2 + Math.random() * 3, // 2-5 的速度（加快）
+        speed: (Math.random() - 0.5) * 0.5, // 水平速度，可以左右移动
+        vy: initialVy, // 初始向上速度
+        maxY: maxY, // 最高点
         rotation: Math.random() * 360,
         rotationSpeed: (Math.random() - 0.5) * 15,
       };
@@ -129,19 +208,54 @@ export default function FruitNinjaGame({
     return () => clearInterval(interval);
   }, [isGameOver, score]);
 
-  // 更新水果位置
+  // 更新水果位置（物理模拟）
   useEffect(() => {
     if (isGameOver) return;
 
     const interval = setInterval(() => {
       setFruits((prev) =>
         prev
-          .map((fruit) => ({
-            ...fruit,
-            y: fruit.y - fruit.speed * 0.5, // 向上移动（y值减小），每16ms移动，加快速度
-            rotation: fruit.rotation + fruit.rotationSpeed * 0.2,
-          }))
-          .filter((fruit) => fruit.y > -15) // 移除超出屏幕顶部的水果
+          .map((fruit) => {
+            // 重力加速度（每帧）- 进一步减小重力使水果能抛得更高
+            const gravity = 0.2;
+            const currentY = fruit.y;
+            let newVy = fruit.vy;
+            
+            // 物理规律：重力始终向下，使速度减小（上升时）或增加（下落时）
+            // vy > 0 表示向上，vy < 0 表示向下
+            // 重力使向上速度减小，使向下速度增加（绝对值）
+            
+            if (newVy > 0) {
+              // 正在上升：速度受重力影响逐渐减小
+              newVy = newVy - gravity;
+              // 如果速度变为负值，说明已经过最高点，开始下落
+              if (newVy < 0) {
+                newVy = 0; // 在最高点速度为零，下一帧开始下落
+              }
+            } else {
+              // 正在下落或静止：速度受重力影响逐渐增加（向下，变为更负）
+              newVy = newVy - gravity; // 减去重力使速度更负（向下更快）
+            }
+            
+            // 更新位置
+            // y值：0%是顶部，100%是底部
+            // vy > 0 时，y减小（向上移动）
+            // vy < 0 时，y增加（向下移动）
+            const newY = currentY - newVy * 0.5;
+            const newX = fruit.x + fruit.speed * 0.3; // 水平移动
+            
+            return {
+              ...fruit,
+              x: newX,
+              y: newY,
+              vy: newVy,
+              rotation: fruit.rotation + fruit.rotationSpeed * 0.2,
+            };
+          })
+          .filter((fruit) => {
+            // 移除超出屏幕顶部或底部的水果
+            return fruit.y > -15 && fruit.y < 110;
+          })
       );
     }, 16);
 
@@ -163,56 +277,127 @@ export default function FruitNinjaGame({
       const gameWidth = gameArea.offsetWidth;
       const gameHeight = gameArea.offsetHeight;
 
-      // 计算手腕在游戏区域中的位置（注意：pose坐标是0-1，需要转换为像素）
-      const leftWristX = leftWrist.x * gameWidth;
-      const leftWristY = leftWrist.y * gameHeight;
-      const rightWristX = rightWrist.x * gameWidth;
-      const rightWristY = rightWrist.y * gameHeight;
+      // 放大挥手动作，使轨迹能覆盖整个屏幕宽度
+      // 使用放大系数，将手腕的移动范围放大到整个屏幕
+      const scaleX = 2.5; // 水平方向放大2.5倍
+      const scaleY = 1.2; // 垂直方向稍微放大
+      
+      // 计算手腕在游戏区域中的位置（注意：pose坐标是0-1）
+      // 将手腕位置映射到更大的范围，使其能覆盖整个屏幕宽度
+      // 使用手腕相对于中心点的偏移，然后放大
+      const centerX = 0.5; // 摄像头中心
+      const centerY = 0.5;
+      
+      // 镜像处理：摄像头画面是镜像的，需要翻转X坐标
+      // 左手在摄像头中显示在右侧，但实际在左侧，所以需要翻转
+      const mirroredLeftX = 1 - leftWrist.x; // 镜像翻转X坐标
+      const mirroredRightX = 1 - rightWrist.x; // 镜像翻转X坐标
+      
+      // 计算相对于中心点的偏移（使用镜像后的坐标）
+      const leftOffsetX = (mirroredLeftX - centerX) * scaleX;
+      const leftOffsetY = (leftWrist.y - centerY) * scaleY;
+      const rightOffsetX = (mirroredRightX - centerX) * scaleX;
+      const rightOffsetY = (rightWrist.y - centerY) * scaleY;
+      
+      // 将偏移映射到游戏区域，确保覆盖整个屏幕宽度
+      const leftWristX = (centerX + leftOffsetX) * gameWidth;
+      const leftWristY = (centerY + leftOffsetY) * gameHeight;
+      const rightWristX = (centerX + rightOffsetX) * gameWidth;
+      const rightWristY = (centerY + rightOffsetY) * gameHeight;
+      
+      // 限制在屏幕范围内
+      const clampedLeftX = Math.max(0, Math.min(gameWidth, leftWristX));
+      const clampedLeftY = Math.max(0, Math.min(gameHeight, leftWristY));
+      const clampedRightX = Math.max(0, Math.min(gameWidth, rightWristX));
+      const clampedRightY = Math.max(0, Math.min(gameHeight, rightWristY));
 
-      // 检测快速移动（切的动作）
+      // 平滑处理：使用指数移动平均（EMA）减少跳动
+      const smoothingFactor = 0.3; // 平滑系数，越小越平滑但延迟越大
+      let smoothedLeftX = clampedLeftX;
+      let smoothedLeftY = clampedLeftY;
+      let smoothedRightX = clampedRightX;
+      let smoothedRightY = clampedRightY;
+
+      if (smoothedPosRef.current.left) {
+        smoothedLeftX = smoothedPosRef.current.left.x * (1 - smoothingFactor) + clampedLeftX * smoothingFactor;
+        smoothedLeftY = smoothedPosRef.current.left.y * (1 - smoothingFactor) + clampedLeftY * smoothingFactor;
+      }
+      if (smoothedPosRef.current.right) {
+        smoothedRightX = smoothedPosRef.current.right.x * (1 - smoothingFactor) + clampedRightX * smoothingFactor;
+        smoothedRightY = smoothedPosRef.current.right.y * (1 - smoothingFactor) + clampedRightY * smoothingFactor;
+      }
+
+      // 更新平滑后的位置
+      smoothedPosRef.current = {
+        left: { x: smoothedLeftX, y: smoothedLeftY },
+        right: { x: smoothedRightX, y: smoothedRightY },
+      };
+
+      // 检测快速移动（切的动作）- 使用平滑后的位置计算速度
       const lastLeft = lastWristPosRef.current.left;
       const lastRight = lastWristPosRef.current.right;
 
       if (lastLeft && lastRight) {
+        // 使用平滑后的位置计算速度
         const leftSpeed = Math.sqrt(
-          Math.pow(leftWristX - lastLeft.x, 2) +
-            Math.pow(leftWristY - lastLeft.y, 2)
+          Math.pow(smoothedLeftX - lastLeft.x, 2) +
+            Math.pow(smoothedLeftY - lastLeft.y, 2)
         );
         const rightSpeed = Math.sqrt(
-          Math.pow(rightWristX - lastRight.x, 2) +
-            Math.pow(rightWristY - lastRight.y, 2)
+          Math.pow(smoothedRightX - lastRight.x, 2) +
+            Math.pow(smoothedRightY - lastRight.y, 2)
         );
 
         // 如果移动速度足够快，认为是切的动作
         const SLASH_THRESHOLD = 20; // 降低阈值，更容易触发
         if (leftSpeed > SLASH_THRESHOLD || rightSpeed > SLASH_THRESHOLD) {
-          // 添加切痕轨迹
-          const activeWrist = leftSpeed > rightSpeed ? leftWrist : rightWrist;
-          const activeWristX = leftSpeed > rightSpeed ? leftWristX : rightWristX;
-          const activeWristY = leftSpeed > rightSpeed ? leftWristY : rightWristY;
+          // 播放挥刀音效
+          playSlashSound();
 
-          setSlashTrails((prev) => [
-            ...prev.slice(-10), // 只保留最近10个点
-            {
+          // 使用平滑后的位置添加切痕轨迹
+          const activeWristX = leftSpeed > rightSpeed ? smoothedLeftX : smoothedRightX;
+          const activeWristY = leftSpeed > rightSpeed ? smoothedLeftY : smoothedRightY;
+
+          setSlashTrails((prev) => {
+            const newTrail = {
               id: Date.now(),
               x: activeWristX,
               y: activeWristY,
               timestamp: Date.now(),
-            },
-          ]);
+            };
+            
+            // 如果上一个点很近，跳过（减少冗余点）
+            if (prev.length > 0) {
+              const lastTrail = prev[prev.length - 1];
+              const distance = Math.sqrt(
+                Math.pow(activeWristX - lastTrail.x, 2) + 
+                Math.pow(activeWristY - lastTrail.y, 2)
+              );
+              // 如果距离太近（小于5px），不添加新点
+              if (distance < 5) {
+                return prev;
+              }
+            }
+            
+            return [
+              ...prev.slice(-15), // 保留最近15个点（增加以支持更长的轨迹）
+              newTrail,
+            ];
+          });
 
-          // 检测是否切中水果
+          // 检测是否切中水果（使用平滑后的位置）
           checkFruitHit(activeWristX, activeWristY);
         } else {
-          // 即使速度不够快，也检测是否在水果附近（更宽松的检测）
-          checkFruitHit(leftWristX, leftWristY);
-          checkFruitHit(rightWristX, rightWristY);
+          // 即使速度不够快，也检测是否在水果附近（使用平滑后的位置）
+          checkFruitHit(smoothedLeftX, smoothedLeftY);
+          checkFruitHit(smoothedRightX, smoothedRightY);
         }
       }
 
+      // 更新原始位置（用于下次速度计算）
       lastWristPosRef.current = {
-        left: { x: leftWristX, y: leftWristY },
-        right: { x: rightWristX, y: rightWristY },
+        left: { x: smoothedLeftX, y: smoothedLeftY },
+        right: { x: smoothedRightX, y: smoothedRightY },
       };
     }
   }, [pose, isDetecting, isGameOver]);
@@ -290,6 +475,9 @@ export default function FruitNinjaGame({
       });
 
       if (hitFruits.length > 0) {
+        // 播放切碎音效
+        playSliceSound();
+
         // 创建切碎动画效果
         hitFruits.forEach((fruit) => {
           if (!gameAreaRef.current) return;
@@ -367,11 +555,40 @@ export default function FruitNinjaGame({
         </div>
       </div>
 
-      {/* 切痕轨迹 */}
+      {/* 切痕轨迹 - 使用平滑的曲线 */}
       <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
+        {slashTrails.length > 1 && (
+          <path
+            d={slashTrails.reduce((path, trail, index) => {
+              if (index === 0) {
+                return `M ${trail.x} ${trail.y}`;
+              } else {
+                const prevTrail = slashTrails[index - 1];
+                // 使用二次贝塞尔曲线使轨迹更平滑
+                const cp1x = prevTrail.x + (trail.x - prevTrail.x) * 0.5;
+                const cp1y = prevTrail.y;
+                return `${path} Q ${cp1x} ${cp1y} ${trail.x} ${trail.y}`;
+              }
+            }, "")}
+            fill="none"
+            stroke="#FFD700"
+            strokeWidth="5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={0.9}
+          />
+        )}
+        {/* 也保留直线连接作为备用，但使用更细的线条 */}
         {slashTrails.map((trail, index) => {
           const nextTrail = slashTrails[index + 1];
           if (!nextTrail) return null;
+          // 计算两点间距离，如果太远则跳过（避免跳跃）
+          const distance = Math.sqrt(
+            Math.pow(nextTrail.x - trail.x, 2) + 
+            Math.pow(nextTrail.y - trail.y, 2)
+          );
+          if (distance > 100) return null; // 跳过距离过大的点
+          
           return (
             <line
               key={`${trail.id}-${index}`}
@@ -380,9 +597,9 @@ export default function FruitNinjaGame({
               x2={nextTrail.x}
               y2={nextTrail.y}
               stroke="#FFD700"
-              strokeWidth="4"
+              strokeWidth="3"
               strokeLinecap="round"
-              opacity={0.8}
+              opacity={0.6}
             />
           );
         })}
