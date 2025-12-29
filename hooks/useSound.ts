@@ -52,21 +52,32 @@ export function useSound() {
         return;
       }
 
-      // 尝试加载音效文件
-      const soundFile = new Audio("/sounds/slash.mp3");
-      soundFile.volume = 0.6;
-      soundFile.preload = "auto";
-      soundFile.oncanplaythrough = () => {
-        audioCache.current.set("slash", soundFile);
-        soundFile.currentTime = 0;
-        soundFile.play().catch(() => {
-          // 如果播放失败，静默处理
-        });
-      };
-      soundFile.onerror = () => {
-        // 文件不存在，静默处理
-      };
-      soundFile.load();
+      // 尝试加载音效文件（挥刀音效）
+      const possibleSlashFiles = [
+        "/sounds/504610__neospica__knife-slice.mp3",
+        "/sounds/slash.mp3",
+      ];
+
+      let slashLoaded = false;
+      for (const filePath of possibleSlashFiles) {
+        const soundFile = new Audio(filePath);
+        soundFile.volume = 0.6;
+        soundFile.preload = "auto";
+        soundFile.oncanplaythrough = () => {
+          if (!slashLoaded) {
+            slashLoaded = true;
+            audioCache.current.set("slash", soundFile);
+            soundFile.currentTime = 0;
+            soundFile.play().catch(() => {
+              // 如果播放失败，静默处理
+            });
+          }
+        };
+        soundFile.onerror = () => {
+          // 继续尝试下一个文件
+        };
+        soundFile.load();
+      }
     } catch (error) {
       // 如果出错，静默处理
     }
@@ -82,30 +93,30 @@ export function useSound() {
         audio.currentTime = 0;
         audio.volume = 0.7;
         audio.play().catch(() => {
-          // 如果播放失败，使用生成的音效
-          generateSliceSound();
+          // 如果播放失败，静默处理
         });
         return;
       }
 
-      // 尝试加载音效文件（支持多个可能的文件名）
-      const possibleFiles = [
+      // 尝试加载音效文件（切碎音效）
+      const possibleSliceFiles = [
+        "/sounds/478145__aris621__nasty-knife-stab-2.wav",
+        "/sounds/slice.wav",
         "/sounds/slice.mp3",
-        "/sounds/504610__neospica__knife-slice.mp3",
       ];
 
-      let loaded = false;
-      for (const filePath of possibleFiles) {
+      let sliceLoaded = false;
+      for (const filePath of possibleSliceFiles) {
         const soundFile = new Audio(filePath);
         soundFile.volume = 0.7;
         soundFile.preload = "auto";
         soundFile.oncanplaythrough = () => {
-          if (!loaded) {
-            loaded = true;
+          if (!sliceLoaded) {
+            sliceLoaded = true;
             audioCache.current.set("slice", soundFile);
             soundFile.currentTime = 0;
             soundFile.play().catch(() => {
-              generateSliceSound();
+              // 如果播放失败，静默处理
             });
           }
         };
@@ -114,62 +125,8 @@ export function useSound() {
         };
         soundFile.load();
       }
-
-      // 如果所有文件都加载失败，延迟后使用生成的音效
-      setTimeout(() => {
-        if (!audioCache.current.get("slice")) {
-          generateSliceSound();
-        }
-      }, 100);
     } catch (error) {
-      // 如果出错，使用生成的音效
-      generateSliceSound();
-    }
-  }, []);
-
-  // 生成切碎音效（使用Web Audio API生成）
-  const generateSliceSound = useCallback(() => {
-    try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-
-      // 创建或获取AudioContext
-      let audioContext = (window as any).__audioContext;
-      if (!audioContext || audioContext.state === 'closed') {
-        audioContext = new AudioContextClass();
-        (window as any).__audioContext = audioContext;
-      }
-
-      // 如果AudioContext被暂停，尝试恢复
-      if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(() => {});
-      }
-      
-      const now = audioContext.currentTime;
-      
-      // 创建多个短促的音效，模拟切碎声
-      for (let i = 0; i < 3; i++) {
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-
-        const startTime = now + i * 0.05;
-        const frequency = 400 + Math.random() * 200;
-        
-        oscillator.frequency.setValueAtTime(frequency, startTime);
-        oscillator.frequency.exponentialRampToValueAtTime(frequency * 0.5, startTime + 0.05);
-        
-        gainNode.gain.setValueAtTime(0.2, startTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 0.05);
-
-        oscillator.type = "square";
-        oscillator.start(startTime);
-        oscillator.stop(startTime + 0.05);
-      }
-    } catch (error) {
-      console.debug("Slice sound generation failed:", error);
+      // 如果出错，静默处理
     }
   }, []);
 
