@@ -43,7 +43,10 @@ export default function CameraGame({ gameType, onBack }: CameraGameProps) {
               canvasRef.current.height = videoRef.current.videoHeight;
             }
             setIsCameraReady(true);
-            startDetection(videoRef.current, canvasRef.current);
+            // 再次检查确保不为null
+            if (videoRef.current && canvasRef.current) {
+              startDetection(videoRef.current, canvasRef.current);
+            }
           };
         }
       } catch (err) {

@@ -55,7 +55,6 @@ export function useSound() {
       // 尝试加载音效文件（挥刀音效）
       const possibleSlashFiles = [
         "/sounds/504610__neospica__knife-slice.mp3",
-        "/sounds/slash.mp3",
       ];
 
       let slashLoaded = false;
